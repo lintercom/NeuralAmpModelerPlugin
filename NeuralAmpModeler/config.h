@@ -69,9 +69,16 @@
 #define IR_ICON_OFF_FN "IRIconOff.svg"
 #define GLOBE_ICON_FN "Globe.svg"
 
+// Original background (still default)
 #define BACKGROUND_FN "Background.jpg"
 #define BACKGROUND2X_FN "Background@2x.jpg"
 #define BACKGROUND3X_FN "Background@3x.jpg"
+
+// Added new AmpCore background variants (not yet used in code by default)
+#define AMPCORE_BACKGROUND_FN "AmpCore_Background.jpg"
+#define AMPCORE_BACKGROUND2X_FN "AmpCore_Background@2x.jpg"
+#define AMPCORE_BACKGROUND3X_FN "AmpCore_Background@3x.jpg"
+
 #define KNOBBACKGROUND_FN "KnobBackground.png"
 #define KNOBBACKGROUND2X_FN "KnobBackground@2x.png"
 #define KNOBBACKGROUND3X_FN "KnobBackground@3x.png"

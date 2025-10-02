@@ -127,13 +127,29 @@ NeuralAmpModeler::NeuralAmpModeler(const InstanceInfo& info)
     const auto irIconOnSVG = pGraphics->LoadSVG(IR_ICON_ON_FN);
     const auto irIconOffSVG = pGraphics->LoadSVG(IR_ICON_OFF_FN);
 
+    // Load original and AmpCore backgrounds if needed in future (currently we only ATTACH the AmpCore one)
     const auto backgroundBitmap = pGraphics->LoadBitmap(BACKGROUND_FN);
+    const auto ampCoreBackgroundBitmap = pGraphics->LoadBitmap(AMPCORE_BACKGROUND_FN);
     const auto fileBackgroundBitmap = pGraphics->LoadBitmap(FILEBACKGROUND_FN);
     const auto inputLevelBackgroundBitmap = pGraphics->LoadBitmap(INPUTLEVELBACKGROUND_FN);
-    const auto linesBitmap = pGraphics->LoadBitmap(LINES_FN);
     const auto knobBackgroundBitmap = pGraphics->LoadBitmap(KNOBBACKGROUND_FN);
     const auto switchHandleBitmap = pGraphics->LoadBitmap(SLIDESWITCHHANDLE_FN);
     const auto meterBackgroundBitmap = pGraphics->LoadBitmap(METERBACKGROUND_FN);
+
+    // If the AmpCore background size differs from the current UI size, resize the UI to match
+    // This allows the window to fit the full background image without stretching.
+    if (ampCoreBackgroundBitmap.W() > 0 && ampCoreBackgroundBitmap.H() > 0)
+    {
+      const int curW = pGraphics->Width();
+      const int curH = pGraphics->Height();
+      const int targetW = ampCoreBackgroundBitmap.W();
+      const int targetH = ampCoreBackgroundBitmap.H();
+      if (curW != targetW || curH != targetH)
+      {
+        // For plugin hosts that disallow resize this is ignored; works in standalone.
+        pGraphics->Resize(targetW, targetH, 1.0f); // keep scaleFactor at 1.0
+      }
+    }
 
     const auto b = pGraphics->GetBounds();
     const auto mainArea = b.GetPadded(-20);
@@ -211,8 +227,8 @@ NeuralAmpModeler::NeuralAmpModeler(const InstanceInfo& info)
       }
     };
 
-    pGraphics->AttachBackground(BACKGROUND_FN);
-    pGraphics->AttachControl(new IBitmapControl(b, linesBitmap));
+    // Attach the AmpCore background (new skin)
+    pGraphics->AttachBackground(AMPCORE_BACKGROUND_FN);
     pGraphics->AttachControl(new IVLabelControl(titleArea, "NEURAL AMP MODELER", titleStyle));
     pGraphics->AttachControl(new ISVGControl(modelIconArea, modelIconSVG));
 
@@ -399,6 +415,7 @@ void NeuralAmpModeler::OnIdle()
     {
       // FIXME -- need to disable only the "normalized" model
       // pGraphics->GetControlWithTag(kCtrlTagOutputMode)->SetDisabled(false);
+      // pGraphics->GetControlWithTag(kCtrlTagCalibrateInput)->SetDisabled(false);
       static_cast<NAMSettingsPageControl*>(pGraphics->GetControlWithTag(kCtrlTagSettingsBox))->ClearModelInfo();
       mModelCleared = false;
     }
