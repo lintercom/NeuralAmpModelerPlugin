@@ -82,6 +82,10 @@
 #define KNOBBACKGROUND_FN "KnobBackground.png"
 #define KNOBBACKGROUND2X_FN "KnobBackground@2x.png"
 #define KNOBBACKGROUND3X_FN "KnobBackground@3x.png"
+
+// New AmpCore knob graphic (value=0 orientation). Keep originals.
+#define AMPCORE_KNOB_FN "AmpCore_knob.png"
+
 #define FILEBACKGROUND_FN "FileBackground.png"
 #define FILEBACKGROUND2X_FN "FileBackground@2x.png"
 #define FILEBACKGROUND3X_FN "FileBackground@3x.png"

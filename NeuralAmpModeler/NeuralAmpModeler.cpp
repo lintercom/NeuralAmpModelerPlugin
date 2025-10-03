@@ -130,25 +130,57 @@ NeuralAmpModeler::NeuralAmpModeler(const InstanceInfo& info)
     // Load original and AmpCore backgrounds if needed in future (currently we only ATTACH the AmpCore one)
     const auto backgroundBitmap = pGraphics->LoadBitmap(BACKGROUND_FN);
     const auto ampCoreBackgroundBitmap = pGraphics->LoadBitmap(AMPCORE_BACKGROUND_FN);
+    const bool hasAmpCoreBG = ampCoreBackgroundBitmap.IsValid() && ampCoreBackgroundBitmap.W() > 0 && ampCoreBackgroundBitmap.H() > 0;
+
     const auto fileBackgroundBitmap = pGraphics->LoadBitmap(FILEBACKGROUND_FN);
     const auto inputLevelBackgroundBitmap = pGraphics->LoadBitmap(INPUTLEVELBACKGROUND_FN);
-    const auto knobBackgroundBitmap = pGraphics->LoadBitmap(KNOBBACKGROUND_FN);
+    // Prefer new AmpCore knob graphic if available
+    IBitmap knobBackgroundBitmap = pGraphics->LoadBitmap(AMPCORE_KNOB_FN);
+    if (!knobBackgroundBitmap.IsValid() || knobBackgroundBitmap.W() == 0 || knobBackgroundBitmap.H() == 0)
+    {
+      // Fallback to high-res original knob (keep previous behaviour)
+      knobBackgroundBitmap = pGraphics->LoadBitmap(KNOBBACKGROUND2X_FN);
+      if(!knobBackgroundBitmap.IsValid())
+      {
+        // Last resort fallback
+        knobBackgroundBitmap = pGraphics->LoadBitmap(KNOBBACKGROUND_FN);
+      }
+    }
     const auto switchHandleBitmap = pGraphics->LoadBitmap(SLIDESWITCHHANDLE_FN);
     const auto meterBackgroundBitmap = pGraphics->LoadBitmap(METERBACKGROUND_FN);
 
-    // If the AmpCore background size differs from the current UI size, resize the UI to match
-    // This allows the window to fit the full background image without stretching.
-    if (ampCoreBackgroundBitmap.W() > 0 && ampCoreBackgroundBitmap.H() > 0)
+    // Attach background with fallback + defensive resize
+    if (hasAmpCoreBG)
     {
-      const int curW = pGraphics->Width();
-      const int curH = pGraphics->Height();
+      pGraphics->AttachBackground(AMPCORE_BACKGROUND_FN);
       const int targetW = ampCoreBackgroundBitmap.W();
       const int targetH = ampCoreBackgroundBitmap.H();
-      if (curW != targetW || curH != targetH)
+      const int kMaxW = 4000; // safety cap
+      const int kMaxH = 3000;
+      if (targetW > 0 && targetH > 0 && targetW < kMaxW && targetH < kMaxH)
       {
-        // For plugin hosts that disallow resize this is ignored; works in standalone.
-        pGraphics->Resize(targetW, targetH, 1.0f); // keep scaleFactor at 1.0
+        const int curW = pGraphics->Width();
+        const int curH = pGraphics->Height();
+        if (curW != targetW || curH != targetH)
+        {
+          std::cout << "Resizing UI to AmpCore background: " << targetW << "x" << targetH << "\n";
+          pGraphics->Resize(targetW, targetH, 1.0f);
+        }
       }
+      else
+      {
+        std::cout << "AmpCore background dimensions invalid or too large (" << targetW << "x" << targetH << "), skipping resize.\n";
+      }
+    }
+    else
+    {
+      std::cout << "AmpCore background not valid, using original background." << std::endl;
+      pGraphics->AttachBackground(BACKGROUND_FN);
+    }
+
+    if(!knobBackgroundBitmap.IsValid())
+    {
+      std::cout << "WARNING: No valid knob bitmap loaded (AmpCore nor fallback). Using vector fallback in NAMKnobControl." << std::endl;
     }
 
     const auto b = pGraphics->GetBounds();
@@ -159,39 +191,66 @@ NeuralAmpModeler::NeuralAmpModeler(const InstanceInfo& info)
 
     // Areas for knobs
     const auto knobsPad = 20.0f;
-    const auto knobsExtraSpaceBelowTitle = 25.0f;
+    const auto knobsExtraSpaceBelowTitle = 5.0f; // keep
     const auto singleKnobPad = -2.0f;
     const auto knobsArea = contentArea.GetFromTop(NAM_KNOB_HEIGHT)
                              .GetReducedFromLeft(knobsPad)
                              .GetReducedFromRight(knobsPad)
-                             .GetVShifted(titleHeight + knobsExtraSpaceBelowTitle);
-    const auto inputKnobArea = knobsArea.GetGridCell(0, kInputLevel, 1, numKnobs).GetPadded(-singleKnobPad);
-    const auto noiseGateArea = knobsArea.GetGridCell(0, kNoiseGateThreshold, 1, numKnobs).GetPadded(-singleKnobPad);
-    const auto bassKnobArea = knobsArea.GetGridCell(0, kToneBass, 1, numKnobs).GetPadded(-singleKnobPad);
-    const auto midKnobArea = knobsArea.GetGridCell(0, kToneMid, 1, numKnobs).GetPadded(-singleKnobPad);
-    const auto trebleKnobArea = knobsArea.GetGridCell(0, kToneTreble, 1, numKnobs).GetPadded(-singleKnobPad);
-    const auto outputKnobArea = knobsArea.GetGridCell(0, kOutputLevel, 1, numKnobs).GetPadded(-singleKnobPad);
+                             .GetVShifted(titleHeight + knobsExtraSpaceBelowTitle - 40.0f); // was -20, now -40 (additional 20px up)
 
-    const auto ngToggleArea =
-      noiseGateArea.GetVShifted(noiseGateArea.H()).SubRectVertical(2, 0).GetReducedFromTop(10.0f);
-    const auto eqToggleArea = midKnobArea.GetVShifted(midKnobArea.H()).SubRectVertical(2, 0).GetReducedFromTop(10.0f);
+    // Original grid-based areas
+    auto inputKnobArea = knobsArea.GetGridCell(0, kInputLevel, 1, numKnobs).GetPadded(-singleKnobPad);
+    auto noiseGateArea = knobsArea.GetGridCell(0, kNoiseGateThreshold, 1, numKnobs).GetPadded(-singleKnobPad);
+    auto bassKnobArea = knobsArea.GetGridCell(0, kToneBass, 1, numKnobs).GetPadded(-singleKnobPad);
+    auto midKnobArea = knobsArea.GetGridCell(0, kToneMid, 1, numKnobs).GetPadded(-singleKnobPad);
+    auto trebleKnobArea = knobsArea.GetGridCell(0, kToneTreble, 1, numKnobs).GetPadded(-singleKnobPad);
+    auto outputKnobArea = knobsArea.GetGridCell(0, kOutputLevel, 1, numKnobs).GetPadded(-singleKnobPad);
 
-    // Areas for model and IR
+    // Reduce gaps between knobs: shift subsequent knobs left by 10px per gap
+    const float gapReduce = 70.0f; // was 30.0f, further reduced spacing by +40px per gap
+    noiseGateArea = noiseGateArea.GetTranslated(-1 * gapReduce, 0.f);
+    bassKnobArea = bassKnobArea.GetTranslated(-2 * gapReduce, 0.f);
+    midKnobArea = midKnobArea.GetTranslated(-3 * gapReduce, 0.f);
+    trebleKnobArea = trebleKnobArea.GetTranslated(-4 * gapReduce, 0.f);
+    outputKnobArea = outputKnobArea.GetTranslated(-5 * gapReduce, 0.f);
+
+    // Toggle areas must follow their parent knob positions (adjusted positioning)
+    const auto ngToggleAreaRaw = noiseGateArea.GetVShifted(noiseGateArea.H()).SubRectVertical(2, 0).GetReducedFromTop(10.0f);
+    const auto eqToggleAreaRaw = midKnobArea.GetVShifted(midKnobArea.H()).SubRectVertical(2, 0).GetReducedFromTop(10.0f);
+
+    // Posun více doleva a pøiblížení k sobì
+    const float toggleGlobalShiftX = -90.f; // více k levému okraji
+    const auto ngToggleAreaBase = ngToggleAreaRaw.GetTranslated(toggleGlobalShiftX, 0.f); // pùvodní velikost
+    const float toggleSpacing = 12.f; // mezera mezi pøepínaèi
+    const float wToggle = ngToggleAreaBase.W();
+    const auto eqToggleArea = IRECT(ngToggleAreaBase.L + wToggle + toggleSpacing, ngToggleAreaBase.T,
+                                    ngToggleAreaBase.L + 2 * wToggle + toggleSpacing, ngToggleAreaBase.B).GetTranslated(-100.f, 0.f);
+    const auto ngToggleArea = ngToggleAreaBase;
+
+    // Areas for model and IR (reworked to avoid overlaps)
     const auto fileWidth = 200.0f;
     const auto fileHeight = 30.0f;
-    const auto irYOffset = 38.0f;
-    const auto modelArea =
-      contentArea.GetFromBottom((2.0f * fileHeight)).GetFromTop(fileHeight).GetMidHPadded(fileWidth).GetVShifted(-1);
-    const auto modelIconArea = modelArea.GetFromLeft(30).GetTranslated(-40, 10);
-    const auto irArea = modelArea.GetVShifted(irYOffset);
-    const auto irSwitchArea = irArea.GetFromLeft(30.0f).GetHShifted(-40.0f).GetScaledAboutCentre(0.6f);
+    const auto irYOffset = 38.0f; // vertical spacing between model and IR rows
+
+    // Place selection rows directly below knobs with a safe gap
+    const float selectionGapBelowKnobs = 35.0f; // distance below knob row
+    const float modelTop = knobsArea.B + selectionGapBelowKnobs;
+
+    IRECT modelArea = IRECT(contentArea.L, modelTop, contentArea.R, modelTop + fileHeight).GetMidHPadded(fileWidth);
+    // Icon area anchored to (possibly) shifted modelArea
+    IRECT modelIconArea = modelArea.GetFromLeft(30).GetTranslated(-40, 10);
+    IRECT irArea = modelArea.GetVShifted(irYOffset);
+    IRECT irSwitchArea = irArea.GetFromLeft(30.0f).GetHShifted(-40.0f).GetScaledAboutCentre(0.6f);
 
     // Areas for meters
-    const auto inputMeterArea = contentArea.GetFromLeft(30).GetHShifted(-20).GetMidVPadded(100).GetVShifted(-25);
-    const auto outputMeterArea = contentArea.GetFromRight(30).GetHShifted(20).GetMidVPadded(100).GetVShifted(-25);
+    const auto inputMeterAreaBase = contentArea.GetFromLeft(30).GetHShifted(-20).GetMidVPadded(100).GetVShifted(-25);
+    const auto outputMeterAreaBase = contentArea.GetFromRight(30).GetHShifted(20).GetMidVPadded(100).GetVShifted(-25);
+    const auto inputMeterArea = inputMeterAreaBase.GetTranslated(50.0f, 0.0f);   // posun ke støedu
+    const auto outputMeterArea = outputMeterAreaBase.GetTranslated(-50.0f, 0.0f); // posun ke støedu
 
     // Misc Areas
-    const auto settingsButtonArea = CornerButtonArea(b);
+    const auto settingsButtonAreaOriginal = CornerButtonArea(b);
+    const auto settingsButtonArea = settingsButtonAreaOriginal.GetTranslated(-50.f, 50.f).GetScaledAboutCentre(1.3f); // posun + zvìtšení
 
     // Model loader button
     auto loadModelCompletionHandler = [&](const WDL_String& fileName, const WDL_String& path) {
@@ -227,9 +286,12 @@ NeuralAmpModeler::NeuralAmpModeler(const InstanceInfo& info)
       }
     };
 
+    // Prepare style for toggles (white labels)
+    const IText switchLabelText(style.labelText.mSize, COLOR_WHITE, style.labelText.mFont, style.labelText.mAlign, style.labelText.mVAlign);
+    IVStyle switchStyle = style.WithLabelText(switchLabelText).WithShowLabel(true).WithShowValue(false);
+
     // Attach the AmpCore background (new skin)
     pGraphics->AttachBackground(AMPCORE_BACKGROUND_FN);
-    pGraphics->AttachControl(new IVLabelControl(titleArea, "NEURAL AMP MODELER", titleStyle));
     pGraphics->AttachControl(new ISVGControl(modelIconArea, modelIconSVG));
 
 #ifdef NAM_PICK_DIRECTORY
@@ -253,19 +315,18 @@ NeuralAmpModeler::NeuralAmpModeler(const InstanceInfo& info)
                                 "Get IRs", getUrl),
       kCtrlTagIRFileBrowser);
     pGraphics->AttachControl(
-      new NAMSwitchControl(ngToggleArea, kNoiseGateActive, "Noise Gate", style, switchHandleBitmap));
-    pGraphics->AttachControl(new NAMSwitchControl(eqToggleArea, kEQActive, "EQ", style, switchHandleBitmap));
+      new NAMSwitchControl(ngToggleArea, kNoiseGateActive, "NOISE GATE", switchStyle, switchHandleBitmap));
+    pGraphics->AttachControl(new NAMSwitchControl(eqToggleArea, kEQActive, "EQ", switchStyle, switchHandleBitmap));
+
+    const IVStyle knobBaseStyle = style.WithShowLabel(false).WithShowValue(false);
 
     // The knobs
-    pGraphics->AttachControl(new NAMKnobControl(inputKnobArea, kInputLevel, "", style, knobBackgroundBitmap));
-    pGraphics->AttachControl(new NAMKnobControl(noiseGateArea, kNoiseGateThreshold, "", style, knobBackgroundBitmap));
-    pGraphics->AttachControl(
-      new NAMKnobControl(bassKnobArea, kToneBass, "", style, knobBackgroundBitmap), -1, "EQ_KNOBS");
-    pGraphics->AttachControl(
-      new NAMKnobControl(midKnobArea, kToneMid, "", style, knobBackgroundBitmap), -1, "EQ_KNOBS");
-    pGraphics->AttachControl(
-      new NAMKnobControl(trebleKnobArea, kToneTreble, "", style, knobBackgroundBitmap), -1, "EQ_KNOBS");
-    pGraphics->AttachControl(new NAMKnobControl(outputKnobArea, kOutputLevel, "", style, knobBackgroundBitmap));
+    pGraphics->AttachControl(new NAMKnobControl(inputKnobArea, kInputLevel, "Input", knobBaseStyle, knobBackgroundBitmap));
+    pGraphics->AttachControl(new NAMKnobControl(noiseGateArea, kNoiseGateThreshold, "Threshold", knobBaseStyle, knobBackgroundBitmap));
+    pGraphics->AttachControl(new NAMKnobControl(bassKnobArea, kToneBass, "Bass", knobBaseStyle, knobBackgroundBitmap), -1, "EQ_KNOBS");
+    pGraphics->AttachControl(new NAMKnobControl(midKnobArea, kToneMid, "Middle", knobBaseStyle, knobBackgroundBitmap), -1, "EQ_KNOBS");
+    pGraphics->AttachControl(new NAMKnobControl(trebleKnobArea, kToneTreble, "Treble", knobBaseStyle, knobBackgroundBitmap), -1, "EQ_KNOBS");
+    pGraphics->AttachControl(new NAMKnobControl(outputKnobArea, kOutputLevel, "Output", knobBaseStyle, knobBackgroundBitmap));
 
     // The meters
     pGraphics->AttachControl(new NAMMeterControl(inputMeterArea, meterBackgroundBitmap, style), kCtrlTagInputMeter);
@@ -821,6 +882,7 @@ void NeuralAmpModeler::_PrepareBuffers(const size_t numChannels, const size_t nu
     mOutputPointers[c] = mOutputArray[c].data();
 }
 
+// Restored methods (previously trimmed causing linker errors) ==================
 void NeuralAmpModeler::_PrepareIOPointers(const size_t numChannels)
 {
   _DeallocateIOPointers();
@@ -830,23 +892,16 @@ void NeuralAmpModeler::_PrepareIOPointers(const size_t numChannels)
 void NeuralAmpModeler::_ProcessInput(iplug::sample** inputs, const size_t nFrames, const size_t nChansIn,
                                      const size_t nChansOut)
 {
-  // We'll assume that the main processing is mono for now. We'll handle dual amps later.
   if (nChansOut != 1)
   {
     std::stringstream ss;
     ss << "Expected mono output, but " << nChansOut << " output channels are requested!";
     throw std::runtime_error(ss.str());
   }
-
-  // On the standalone, we can probably assume that the user has plugged into only one input and they expect it to be
-  // carried straight through. Don't apply any division over nChansIn because we're just "catching anything out there."
-  // However, in a DAW, it's probably something providing stereo, and we want to take the average in order to avoid
-  // doubling the loudness. (This would change w/ double mono processing)
   double gain = mInputGain;
 #ifndef APP_API
   gain /= (float)nChansIn;
 #endif
-  // Assume _PrepareBuffers() was already called
   for (size_t c = 0; c < nChansIn; c++)
     for (size_t s = 0; s < nFrames; s++)
       if (c == 0)
@@ -859,17 +914,14 @@ void NeuralAmpModeler::_ProcessOutput(iplug::sample** inputs, iplug::sample** ou
                                       const size_t nChansIn, const size_t nChansOut)
 {
   const double gain = mOutputGain;
-  // Assume _PrepareBuffers() was already called
   if (nChansIn != 1)
     throw std::runtime_error("Plugin is supposed to process in mono.");
-  // Broadcast the internal mono stream to all output channels.
   const size_t cin = 0;
   for (auto cout = 0; cout < nChansOut; cout++)
     for (auto s = 0; s < nFrames; s++)
-#ifdef APP_API // Ensure valid output to interface
+#ifdef APP_API
       outputs[cout][s] = std::clamp(gain * inputs[cin][s], -1.0, 1.0);
-#else // In a DAW, other things may come next and should be able to handle large
-      // values.
+#else
       outputs[cout][s] = gain * inputs[cin][s];
 #endif
 }
@@ -877,9 +929,7 @@ void NeuralAmpModeler::_ProcessOutput(iplug::sample** inputs, iplug::sample** ou
 void NeuralAmpModeler::_UpdateControlsFromModel()
 {
   if (mModel == nullptr)
-  {
     return;
-  }
   if (auto* pGraphics = GetUI())
   {
     ModelInfo modelInfo;
@@ -907,26 +957,18 @@ void NeuralAmpModeler::_UpdateLatency()
 {
   int latency = 0;
   if (mModel)
-  {
     latency += mModel->GetLatency();
-  }
-  // Other things that add latency here...
-
-  // Feels weird to have to do this.
   if (GetLatency() != latency)
-  {
     SetLatency(latency);
-  }
 }
 
 void NeuralAmpModeler::_UpdateMeters(sample** inputPointer, sample** outputPointer, const size_t nFrames,
                                      const size_t nChansIn, const size_t nChansOut)
 {
-  // Right now, we didn't specify MAXNC when we initialized these, so it's 1.
-  const int nChansHack = 1;
+  const int nChansHack = 1; // mono internal
   mInputSender.ProcessBlock(inputPointer, (int)nFrames, kCtrlTagInputMeter, nChansHack);
   mOutputSender.ProcessBlock(outputPointer, (int)nFrames, kCtrlTagOutputMeter, nChansHack);
 }
 
-// HACK
+// Include legacy unserialization helpers
 #include "Unserialization.cpp"

@@ -3,6 +3,7 @@
 #include <cmath> // std::round
 #include <sstream> // std::stringstream
 #include <unordered_map> // std::unordered_map
+#include <string>
 #include "IControls.h"
 
 #define PLUG() static_cast<PLUG_CLASS_NAME*>(GetDelegate())
@@ -56,7 +57,7 @@ public:
     if (mMouseIsOver)
       g.FillEllipse(PluginColors::MOUSEOVER, mRECT);
 
-    ISVGButtonControl::Draw(g);
+    ISVGButtonControl::Draw(g); // ponecháme pùvodní vykreslení ikonky
   }
 };
 
@@ -64,8 +65,9 @@ class NAMKnobControl : public IVKnobControl, public IBitmapBase
 {
 public:
   NAMKnobControl(const IRECT& bounds, int paramIdx, const char* label, const IVStyle& style, IBitmap bitmap)
-  : IVKnobControl(bounds, paramIdx, label, style, true)
+  : IVKnobControl(bounds, paramIdx, "", style, true) // pøedáme prázdný label (nechceme horní)
   , IBitmapBase(bitmap)
+  , mBottomLabel(label ? label : "")
   {
     mInnerPointerFrac = 0.55;
   }
@@ -74,22 +76,72 @@ public:
 
   void DrawWidget(IGraphics& g) override
   {
-    float widgetRadius = GetRadius() * 0.73;
-    auto knobRect = mWidgetBounds.GetCentredInside(mWidgetBounds.W(), mWidgetBounds.W());
-    const float cx = knobRect.MW(), cy = knobRect.MH();
+    const float ds = g.GetDrawScale();
+    const float base = std::min(mWidgetBounds.W(), mWidgetBounds.H());
+
+    // Zachovat pùvodní velikost tìla knobu (stejnì jako døíve)
+    const float knobScale = 0.6666667f;
+    const float knobSize = base * knobScale;
+    auto knobRect = mWidgetBounds.GetCentredInside(knobSize, knobSize);
+
+    const float cx = std::floor(knobRect.MW()) + 0.5f;
+    const float cy = std::floor(knobRect.MH()) + 0.5f;
+
+    // Pùvodní polomìr tìla knobu
+    const float knobRadius = knobRect.W() * 0.5f * 0.73f; // zachování stejné proporce jako pøed zmìnami
+
     const float angle = mAngle1 + (static_cast<float>(GetValue()) * (mAngle2 - mAngle1));
-    DrawIndicatorTrack(g, angle, cx + 0.5, cy, widgetRadius);
-    g.DrawFittedBitmap(mBitmap, knobRect);
-    float data[2][2];
-    RadialPoints(angle, cx, cy, mInnerPointerFrac * widgetRadius, mInnerPointerFrac * widgetRadius, 2, data);
-    g.PathCircle(data[1][0], data[1][1], 3);
-    g.PathFill(IPattern::CreateRadialGradient(data[1][0], data[1][1], 4.0f,
-                                              {{GetColor(mMouseIsOver ? kX3 : kX1), 0.f},
-                                               {GetColor(mMouseIsOver ? kX3 : kX1), 0.8f},
-                                               {COLOR_TRANSPARENT, 1.0f}}),
-               {}, &mBlend);
-    g.DrawCircle(COLOR_BLACK.WithOpacity(0.5f), data[1][0], data[1][1], 3, &mBlend);
+
+    // Nové parametry stupnice (venku kolem knobu – knob se nezmenší)
+    const float gap = 5.0f;               // mezera mezi knobem a zaèátkem stupnice
+    const float trackThickness = 4.5f;    // základní tlouška stupnice
+    const float valueThickness = 5.5f;    // tlouška aktivní èásti
+
+    // Track bude mimo knob: vnìjší polomìr = knobRadius + gap + valueThickness/2
+    const float trackRadius = std::round((knobRadius + gap + valueThickness * 0.5f) * ds) / ds;
+
+    IStrokeOptions baseStroke;
+    baseStroke.mCapOption = ELineCap::Round;
+    baseStroke.mJoinOption = ELineJoin::Round;
+
+    const IColor trackBase = IColor(180, 160, 160, 160).WithOpacity(0.25f); // svìtle šedá základ
+    const IColor trackValue = IColor(255, 208, 208, 208); // svìtlejší šedá aktivní
+
+    // Celý rozsah stupnice
+    g.PathArc(cx, cy, trackRadius, mAngle1, mAngle2);
+    g.PathStroke(trackBase, trackThickness, baseStroke, &mBlend);
+
+    // Aktivní èást
+    g.PathArc(cx, cy, trackRadius, mAngle1, angle);
+    g.PathStroke(trackValue, valueThickness, baseStroke, &mBlend);
+
+    // Tìlo knobu ponecháno stejnì jako døíve (bitmapa nebo fallback) – nezmenšeno
+    if (mBitmap.IsValid() && mBitmap.W() > 0 && mBitmap.H() > 0)
+    {
+      g.DrawFittedBitmap(mBitmap, knobRect);
+    }
+    else
+    {
+      IRECT circle = knobRect.GetPadded(-knobRect.W() * 0.05f);
+      g.FillEllipse(GetColor(kX1).WithOpacity(0.15f), circle, &mBlend);
+      g.DrawEllipse(GetColor(kFR), circle, &mBlend, 2.0f);
+    }
+
+    // Popisek dole (stejný)
+    if (!mBottomLabel.empty())
+    {
+      static const IText labelText(16.f, COLOR_BLACK, "Roboto-Regular", EAlign::Center, EVAlign::Top);
+      const float textHeight = 16.f;
+      float top = knobRect.B + 2.f - 10.f;
+      IRECT textRect(knobRect.L, top, knobRect.R, top + textHeight);
+      std::string upper = mBottomLabel;
+      for (auto &c : upper) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+      g.DrawText(labelText, upper.c_str(), textRect);
+    }
   }
+
+private:
+  std::string mBottomLabel; // text zobrazený dole místo hodnoty
 };
 
 class NAMSwitchControl : public IVSlideSwitchControl, public IBitmapBase
@@ -104,7 +156,7 @@ public:
                            .WithDrawShadows(false)
                            .WithColor(kFR, COLOR_BLACK)
                            .WithFrameThickness(0.5f)
-                           .WithWidgetFrac(0.5f)
+                           .WithWidgetFrac(0.35f) // zkrácení dráhy z 0.5 na 0.35
                            .WithLabelOrientation(EOrientation::South))
   , IBitmapBase(bitmap)
   {
@@ -119,44 +171,30 @@ public:
   void DrawTrack(IGraphics& g, const IRECT& bounds) override
   {
     IRECT handleBounds = GetAdjustedHandleBounds(bounds);
-    handleBounds = IRECT(handleBounds.L, handleBounds.T, handleBounds.R, handleBounds.T + mBitmap.H());
+    // Zmenšení výšky dráhy (opticky kratší) a barva sladìná se stupnicí knobù (kFR barva knob stupnic)
+    handleBounds = handleBounds.GetPadded(-handleBounds.H() * 0.15f); // lehké zúžení
+    IColor trackColor = GetColor(kFR).WithOpacity(0.25f);
+    IColor activeColor = GetColor(kX1); // dle knobù
+
     IRECT centreBounds = handleBounds.GetPadded(-mStyle.shadowOffset);
     IRECT shadowBounds = handleBounds.GetTranslated(mStyle.shadowOffset, mStyle.shadowOffset);
-    //    const float contrast = mDisabled ? -GRAYED_ALPHA : 0.f;
     float cR = 7.f;
     const float tlr = cR;
     const float trr = cR;
     const float blr = cR;
     const float brr = cR;
 
-    // outer shadow
-    if (mStyle.drawShadows)
-      g.FillRoundRect(GetColor(kSH), shadowBounds, tlr, trr, blr, brr, &mBlend);
+    // Background unified color
+    g.FillRoundRect(trackColor, handleBounds, tlr, trr, blr, brr, &mBlend);
 
-    // Embossed style unpressed
-    if (mStyle.emboss)
-    {
-      // Positive light
-      g.FillRoundRect(GetColor(kPR), handleBounds, tlr, trr, blr, brr /*, &blend*/);
-
-      // Negative light
-      g.FillRoundRect(GetColor(kSH), shadowBounds, tlr, trr, blr, brr /*, &blend*/);
-
-      // Fill in foreground
-      g.FillRoundRect(GetValue() > 0.5 ? GetColor(kX1) : COLOR_BLACK, centreBounds, tlr, trr, blr, brr, &mBlend);
-
-      // Shade when hovered
-      if (mMouseIsOver)
-        g.FillRoundRect(GetColor(kHL), centreBounds, tlr, trr, blr, brr, &mBlend);
-    }
+    // Active fill (simple left/right depending on value)
+    IRECT activeRect = handleBounds;
+    if (GetValue() < 0.5)
+      activeRect = activeRect.GetFromLeft(activeRect.W() * 0.5f);
     else
-    {
-      g.FillRoundRect(GetValue() > 0.5 ? GetColor(kX1) : COLOR_BLACK, handleBounds, tlr, trr, blr, brr /*, &blend*/);
+      activeRect = activeRect.GetFromRight(activeRect.W() * 0.5f);
 
-      // Shade when hovered
-      if (mMouseIsOver)
-        g.FillRoundRect(GetColor(kHL), handleBounds, tlr, trr, blr, brr, &mBlend);
-    }
+    g.FillRoundRect(activeColor.WithOpacity(0.35f), activeRect, tlr, trr, blr, brr, &mBlend);
 
     if (mStyle.drawFrame)
       g.DrawRoundRect(GetColor(kFR), handleBounds, tlr, trr, blr, brr, &mBlend, mStyle.frameThickness);
@@ -165,16 +203,17 @@ public:
   void DrawHandle(IGraphics& g, const IRECT& filledArea) override
   {
     IRECT r;
+    const float handleFrac = 0.4f; // menší jezdec
     if (GetSelectedIdx() == 0)
     {
-      r = filledArea.GetFromLeft(mBitmap.W());
+      r = filledArea.GetFromLeft(filledArea.W() * handleFrac);
     }
     else
     {
-      r = filledArea.GetFromRight(mBitmap.W());
+      r = filledArea.GetFromRight(filledArea.W() * handleFrac);
     }
 
-    g.DrawBitmap(mBitmap, r, 0, 0, nullptr);
+    g.FillRoundRect(GetColor(kX1), r, 4.f, 4.f, 4.f, 4.f, &mBlend);
   }
 };
 
@@ -880,14 +919,14 @@ private:
 
       buildInfoStr.SetFormatted(100, "Version %s %s %s", verStr.Get(), PLUG()->GetArchStr(), PLUG()->GetAPIStr());
 
-      AddChildControl(new IVLabelControl(GetRECT().SubRectVertical(5, 0), "NEURAL AMP MODELER", mStyle));
-      AddChildControl(new IVLabelControl(GetRECT().SubRectVertical(5, 1), "By Steven Atkinson", mStyle));
-      AddChildControl(new IVLabelControl(GetRECT().SubRectVertical(5, 2), buildInfoStr.Get(), mStyle));
-      AddChildControl(new IURLControl(GetRECT().SubRectVertical(5, 3),
+      // Odstranìn nápis "NEURAL AMP MODELER" a prázdný øádek – položky posunuty nahoru
+      AddChildControl(new IVLabelControl(GetRECT().SubRectVertical(4, 0), "By Steven Atkinson", mStyle));
+      AddChildControl(new IVLabelControl(GetRECT().SubRectVertical(4, 1), buildInfoStr.Get(), mStyle));
+      AddChildControl(new IURLControl(GetRECT().SubRectVertical(4, 2),
                                       "Plug-in development: Steve Atkinson, Oli Larkin, ... ",
                                       "https://github.com/sdatkinson/NeuralAmpModelerPlugin/graphs/contributors", mText,
                                       COLOR_TRANSPARENT, PluginColors::HELP_TEXT_MO, PluginColors::HELP_TEXT_CLICKED));
-      AddChildControl(new IURLControl(GetRECT().SubRectVertical(5, 4), "www.neuralampmodeler.com",
+      AddChildControl(new IURLControl(GetRECT().SubRectVertical(4, 3), "www.neuralampmodeler.com",
                                       "https://www.neuralampmodeler.com", mText, COLOR_TRANSPARENT,
                                       PluginColors::HELP_TEXT_MO, PluginColors::HELP_TEXT_CLICKED));
     };
